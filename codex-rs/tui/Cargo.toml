@@ -92,7 +92,9 @@ textwrap = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
+    "io-util",
     "macros",
+    "net",
     "process",
     "rt-multi-thread",
     "signal",

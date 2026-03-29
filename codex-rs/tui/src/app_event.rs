@@ -504,6 +504,12 @@ pub(crate) enum AppEvent {
         collaboration_mode: CollaborationModeMask,
     },
 
+    /// Inject a message from an external source (e.g., Unix socket).
+    /// Queued if a turn is running; submitted immediately otherwise.
+    ExternalMessage {
+        text: String,
+    },
+
     /// Open the approval popup.
     FullScreenApprovalRequest(ApprovalRequest),
 

@@ -5645,6 +5645,14 @@ impl ChatWidget {
         }
     }
 
+    /// Inject a message from an external source. If a turn is running the
+    /// message is queued and auto-submitted when the turn finishes; otherwise
+    /// it is submitted immediately.
+    pub(crate) fn inject_external_message(&mut self, text: String) {
+        tracing::info!("[external-inject] queuing message: {:.60}", text);
+        self.queue_user_message(UserMessage::from(text));
+    }
+
     fn submit_user_message(&mut self, user_message: UserMessage) {
         if !self.is_session_configured() {
             tracing::warn!("cannot submit user message before session is configured; queueing");

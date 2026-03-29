@@ -3662,6 +3662,65 @@ impl App {
         #[cfg(debug_assertions)]
         let pre_loop_exit_reason: Option<ExitReason> = None;
 
+        // --- External message injection via Unix socket ---
+        let inject_socket_path = format!("/tmp/codex-inject-{}.sock", std::process::id());
+        // Remove stale socket from a previous run.
+        let _ = std::fs::remove_file(&inject_socket_path);
+        let _inject_listener = match tokio::net::UnixListener::bind(&inject_socket_path) {
+            Ok(listener) => {
+                tracing::info!("[external-inject] listening on {inject_socket_path}");
+                let tx = app.app_event_tx.clone();
+                let handle = tokio::spawn(async move {
+                    loop {
+                        let (stream, _) = match listener.accept().await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::warn!("[external-inject] accept error: {e}");
+                                continue;
+                            }
+                        };
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            use tokio::io::AsyncBufReadExt;
+                            let reader = tokio::io::BufReader::new(stream);
+                            let mut lines = reader.lines();
+                            while let Ok(Some(line)) = lines.next_line().await {
+                                let line = line.trim().to_string();
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                // Try JSON {"text":"..."} first, fall back to raw text.
+                                let text = if let Ok(parsed) =
+                                    serde_json::from_str::<serde_json::Value>(&line)
+                                {
+                                    parsed
+                                        .get("text")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or(&line)
+                                        .to_string()
+                                } else {
+                                    line
+                                };
+                                tracing::info!(
+                                    "[external-inject] received: {:.60}",
+                                    text
+                                );
+                                tx.send(AppEvent::ExternalMessage {
+                                    text,
+                                });
+                            }
+                        });
+                    }
+                });
+                Some(handle)
+            }
+            Err(e) => {
+                tracing::warn!("[external-inject] failed to bind {inject_socket_path}: {e}");
+                None
+            }
+        };
+        let _inject_socket_path = inject_socket_path.clone();
+
         let exit_reason_result = if let Some(exit_reason) = pre_loop_exit_reason {
             Ok(exit_reason)
         } else {
@@ -3721,6 +3780,12 @@ impl App {
                 }
             }
         };
+        // Clean up external inject socket.
+        let _ = std::fs::remove_file(&_inject_socket_path);
+        if let Some(handle) = _inject_listener {
+            handle.abort();
+        }
+
         if let Err(err) = app_server.shutdown().await {
             tracing::warn!(error = %err, "failed to shut down embedded app server");
         }
@@ -5138,6 +5203,9 @@ impl App {
             } => {
                 self.chat_widget
                     .submit_user_message_with_mode(text, collaboration_mode);
+            }
+            AppEvent::ExternalMessage { text } => {
+                self.chat_widget.inject_external_message(text);
             }
             AppEvent::ManageSkillsClosed => {
                 self.chat_widget.handle_manage_skills_closed();
